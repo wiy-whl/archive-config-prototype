@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>档案</title>
+  <link rel="stylesheet" href="../assets/css/kg.css?v=bind4">
+  <link rel="stylesheet" href="../assets/css/kg-portal.css">
+</head>
+<body class="portal-body">
+  <div id="portalHeader"></div>
+  <div class="archive-page" id="archiveRoot"></div>
+
+  <div class="modal-overlay" id="rawModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <span class="modal-title" id="rawModalTitle">原始数据</span>
+        <button class="modal-close" data-close="rawModal">&times;</button>
+      </div>
+      <div class="modal-body" id="rawModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" data-close="rawModal">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../assets/js/kg-common.js"></script>
+  <script src="../assets/js/kg-portal.js"></script>
+  <script src="../assets/js/kg-archive.js?v=view6"></script>
+  <script>
+    document.getElementById('portalHeader').innerHTML = renderPortalHeader('home');
+    bindPortalHeaderNav();
+
+    const params = new URLSearchParams(location.search);
+    const entity = params.get('entity') || '人员';
+    const requested = params.get('tplId');
+    // 实体入口用副本 ent_*；显式 tplId 才读蓝图列表。禁止再 getById 回落错模板。
+    const tpl = ArchiveTemplateStore.normalizeTemplate(
+      requested
+        ? ArchiveTemplateStore.getById(requested)
+        : ArchiveTemplateStore.getForEntity(entity)
+    );
+    document.title = `${entity}档案`;
+    const person = ArchiveDemoData.getPerson(params.get('name'), params.get('id'), params.get('phone'));
+
+    if (!tpl) {
+      document.getElementById('archiveRoot').innerHTML = `
+        <div class="archive-card" style="padding:48px 32px">
+          <h1 style="margin:0 0 8px;font-size:20px">${entity}档案</h1>
+          <p class="archive-hint">该实体还没有档案副本。请到「档案模板」看板应用模板或从零配置，并在设计器里配好对象来源。</p>
+          <p><a class="btn-link" href="../archive-template.html?entity=${encodeURIComponent(entity)}">去配置</a></p>
+        </div>`;
+    } else {
+    const columnsByTab = ArchiveColumnStore.getForTemplate(tpl.id);
+    const source = ArchiveLoad.sourceOf(tpl);
+    const tabs = (tpl.tabs || []).filter(t => t.enabled);
+    let activeTab = params.get('tab') || tabs[0]?.id;
+
+    function renderBasic() {
+      const fields = source.basicFields || [];
+      return `
+        <aside class="archive-basic">
+          <h3>基础信息</h3>
+          ${fields.length
+            ? fields.map(f => `<div class="archive-kv"><span>${f}</span><span>${ArchiveLoad.personValue(person, f)}</span></div>`).join('')
+            : '<p class="archive-hint">主表尚未配置基础信息字段。</p>'}
+        </aside>`;
+    }
+
+    function renderTabPanel() {
+      const tab = tabs.find(t => t.id === activeTab);
+      if (!tab) return '';
+      if (tab.type === 'overview') {
+        return `
+          <div class="archive-tab-panel">
+            <div class="archive-section-title">总览</div>
+            <p class="archive-hint">来自主表 ${source.masterTable || '—'}，条件 ${source.idField || '实体标识'} = 入口标识。总览不另挂业务表。</p>
+            ${ArchivePresent.renderOverview(person, source)}
+          </div>`;
+      }
+      const cols = (columnsByTab[tab.id] || []).filter((c) => {
+        if (!c) return false;
+        if (tab.type === 'merged') return c.type === 'merged' || c.style === 'aggregate';
+        return c.type !== 'merged';
+      });
+      if (!cols.length) {
+        return `<div class="archive-tab-panel"><p class="archive-hint">该界面还没有栏目。请到设计器「配置档案」添加。</p></div>`;
+      }
+      return `<div class="archive-tab-panel is-${getPageLayout()}">${cols.map(col => {
+        const rows = ArchiveDemoData.rowsForColumn(col, person);
+        return `
+          <div class="arch-col-block" data-col-block="${col.id}">
+            <div class="archive-section-title">
+              ${col.name}
+              <span class="meta">${col.type === 'merged'
+                ? '合表 · ' + ArchiveLoad.normalizeSources(col).map(s => s.tableName + '.' + (s.joinField || '未对齐')).join('、')
+                : (col.tableName && col.joinField ? col.tableName + '.' + col.joinField + ' = ' + (source.masterTable || '主表') + '.' + (source.idField || '标识') : '未配齐来源')}</span>
+            </div>
+            ${col.type === 'merged' ? '<p class="archive-hint">合表仍按多张表对齐加载；这里用类型图标呈现摘要，点「详情」看原始行。</p>' : ''}
+            ${ArchivePresent.render(rows, col)}
+          </div>`;
+      }).join('')}</div>`;
+    }
+
+    function getPageLayout() {
+      return tpl.pageLayout || (tpl.basicInfo?.position === 'top' ? 'horizontal' : 'vertical');
+    }
+
+    function renderHeadIcons() {
+      const icons = Array.isArray(tpl.header?.icons) ? tpl.header.icons : [];
+      if (!icons.length) return '';
+      return `<div class="archive-head-icons">${icons.map((item, index) =>
+        `<button type="button" class="archive-head-icon" data-head-icon="${index}">${ArchivePresent.glyph(item.icon)}<span>${item.label || '图标'}</span></button>`
+      ).join('')}</div>`;
+    }
+
+    function renderArchive() {
+      document.getElementById('archiveRoot').innerHTML = `
+        <div class="archive-card">
+          <div class="archive-header">
+            ${tpl.header.photo ? '<div class="archive-photo">👤</div>' : ''}
+            <div class="archive-identity">
+              <h1>${source.nameField ? ArchiveLoad.personValue(person, source.nameField) : person.name}</h1>
+              <div class="idno">${source.idField ? ArchiveLoad.personValue(person, source.idField) : person.idNo}</div>
+              ${renderHeadIcons()}
+              ${source.tagField ? `<div class="archive-tags">${ArchiveLoad.personValue(person, source.tagField).split('、').filter(Boolean).map(t => `<span class="archive-tag">${t}</span>`).join('')}</div>` : ''}
+              <div style="margin-top:12px"><a class="btn-link" href="super-search.html?appId=app_super_search&q=${encodeURIComponent(person.idNo)}">返回全警通查</a></div>
+            </div>
+          </div>
+          <div class="archive-body top">
+            ${renderBasic()}
+            <div class="archive-main">
+              <div class="archive-tabs">
+                ${tabs.map(t => `<button type="button" class="archive-tab ${t.id === activeTab ? 'active' : ''}" data-tab="${t.id}">${ArchivePresent.glyph(t.icon)}<span>${t.name}</span></button>`).join('')}
+              </div>
+              ${renderTabPanel()}
+            </div>
+          </div>
+        </div>`;
+
+      document.querySelectorAll('[data-head-icon]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = (tpl.header?.icons || [])[Number(btn.dataset.headIcon)] || {};
+          const raw = item.tableName ? ArchiveDemoData.mockRaw(item.tableName, person, 0) : {};
+          const fields = item.fields || [];
+          document.getElementById('rawModalTitle').textContent = item.label || '图标';
+          document.getElementById('rawModalBody').innerHTML = item.tableName && fields.length
+            ? `<p class="archive-hint">${item.tableName}.${item.joinField || '未对齐'} = ${(source.masterTable || '主表')}.${source.idField || '标识'}</p>${fields.map(name => `<div class="archive-kv"><span>${name}</span><span>${raw[name] ?? '—'}</span></div>`).join('')}`
+            : '<p class="archive-hint">这个图标还没有绑定数据表和字段。</p>';
+          document.getElementById('rawModal').classList.add('show');
+        });
+      });
+      document.querySelectorAll('[data-tab]').forEach(btn => {
+        btn.addEventListener('click', () => { activeTab = btn.dataset.tab; renderArchive(); });
+      });
+      document.querySelectorAll('[data-raw-col]').forEach(el => {
+        el.addEventListener('click', () => {
+          const col = (columnsByTab[activeTab] || []).find(c => c.id === el.dataset.rawCol);
+          const row = ArchiveDemoData.rowsForColumn(col, person)[+el.dataset.rawIdx];
+          if (!row?.raw) { portalToast('暂无原始数据'); return; }
+          document.getElementById('rawModalTitle').textContent = `原始数据 · ${row.来源表 || col?.name || '来源表'}`;
+          document.getElementById('rawModalBody').innerHTML = `
+            <p class="archive-hint">以下为合表记录对应的来源单表字段，非合表摘要。</p>
+            <dl class="archive-raw-grid">
+              ${Object.entries(row.raw).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}
+            </dl>`;
+          document.getElementById('rawModal').classList.add('show');
+        });
+      });
+      document.querySelectorAll('[data-source-col]').forEach(el => {
+        el.addEventListener('click', () => {
+          const col = (columnsByTab[activeTab] || []).find(c => c.id === el.dataset.sourceCol);
+          const idx = Number(el.dataset.sourceIdx) || 0;
+          const names = ArchivePresent.sourceNames(col);
+          const groups = names.map(table => {
+            const raw = ArchiveDemoData.mockRaw(table, person, idx);
+            const used = (col.fieldMap || []).filter(item => (item.sourceTable || col.tableName) === table && item.display !== false).map(item => item.alias || item.name);
+            const joinField = col.joinField || source.idField || '标识';
+            return `
+              <h4 style="margin:14px 0 4px;font-size:14px"><button type="button" class="btn-link" data-jump-table="${table}" data-jump-idx="${idx}" data-jump-field="${joinField}">${table} · 跳转</button></h4>
+              <p class="archive-hint">${table}.${joinField} = ${(source.masterTable || '主表')}.${source.idField || '标识'}${used.length ? ' · 本栏使用 ' + used.join('、') : ''}</p>
+              <dl class="archive-raw-grid">
+                ${Object.entries(raw).map(([k, v]) => `<dt>${k}</dt><dd>${v ?? '—'}</dd>`).join('')}
+              </dl>`;
+          }).join('');
+          document.getElementById('rawModalTitle').textContent = '来源数据';
+          document.getElementById('rawModalBody').innerHTML = groups || '<p class="archive-hint">还没有配置来源数据表。</p>';
+          document.getElementById('rawModalBody').querySelectorAll('[data-jump-table]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const table = btn.dataset.jumpTable;
+              const rowIndex = Number(btn.dataset.jumpIdx) || 0;
+              const joinField = btn.dataset.jumpField || source.idField || '标识';
+              const raw = ArchiveDemoData.mockRaw(table, person, rowIndex);
+              const payload = {
+                tableName: table,
+                joinField,
+                joinValue: raw[joinField] ?? '',
+                masterTable: source.masterTable || '主表',
+                idField: source.idField || '标识',
+                rowIndex,
+              };
+              if (typeof window.__abJumpSourceTable === 'function') window.__abJumpSourceTable(payload);
+              document.getElementById('rawModal').classList.remove('show');
+              portalToast(`已发起跳转：${table}。数据表页面由接口打开。`);
+            });
+          });
+          document.getElementById('rawModal').classList.add('show');
+        });
+      });
+    }
+
+    renderArchive();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>档案模板 - 知识图谱平台</title>
+  <link rel="stylesheet" href="assets/css/kg.css?v=bind26">
+</head>
+<body>
+  <div id="topHeader"></div>
+  <div class="kg-body">
+    <div id="sidebar"></div>
+    <div class="kg-main">
+      <div id="pageHeader"></div>
+      <div class="kg-content archive-tpl-page">
+        <div class="kg-card" id="pageRoot"></div>
+      </div>
+    </div>
+  </div>
+  <script src="assets/js/kg-common.js?v=tpl3"></script>
+  <script src="assets/js/kg-archive.js?v=bind16"></script>
+  <script>
+    // 构建时把 /archive-config-prototype/ 写成 /archive-config-prototype/；本地未替换则按路径推断
+    const APP_BASE = "/archive-config-prototype/";
+    function siteRoot() {
+      if (APP_BASE && !APP_BASE.includes("@@")) {
+        return APP_BASE.endsWith("/") ? APP_BASE : `${APP_BASE}/`;
+      }
+      const path = location.pathname;
+      const i = path.indexOf("/kg/");
+      if (i >= 0) return `${path.slice(0, i)}/`;
+      if (!path.endsWith("/")) return path.replace(/\/[^/]*$/, "/") || "/";
+      return path || "/";
+    }
+    // 仅本机用错端口打开静态文件时，引导到 Vite
+    if ((location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+      && location.port && location.port !== '5173') {
+      location.replace('http://127.0.0.1:5173/kg/' + location.pathname.split('/').pop() + location.search);
+      throw new Error('redirect');
+    }
+
+    function puckDesignUrl(opts) {
+      const root = siteRoot();
+      const back = root + 'kg/archive-template.html';
+      if (typeof opts === 'string') {
+        return root + '?' + new URLSearchParams({ tplId: opts, mode: 'blueprint', back }).toString();
+      }
+      const query = { back, mode: opts.mode || 'blueprint' };
+      if (opts.tplId) query.tplId = opts.tplId;
+      if (opts.entity) query.entity = opts.entity;
+      return root + '?' + new URLSearchParams(query).toString();
+    }
+
+    function blueprintUrl(tplId) {
+      return puckDesignUrl({ mode: 'blueprint', tplId });
+    }
+
+    function entityDesignUrl(entity) {
+      return puckDesignUrl({ mode: 'entity', entity });
+    }
+
+    let templates = ArchiveTemplateStore.getAll();
+    const opening = new URLSearchParams(location.search);
+
+    // 三种视图：实体总览（默认）/ 起点选择（step=start）/ 模板库（view=tpl）
+    function viewKind() {
+      if (opening.get('view') === 'tpl') return 'tpl';
+      if (opening.get('step') === 'start') return 'start';
+      return 'entities';
+    }
+
+    function entityParam() {
+      const name = opening.get('entity') || '';
+      return ArchiveTemplateStore.ENTITY_TYPES.includes(name) ? name : '';
+    }
+
+    let selectedEntity = entityParam() || '人员';
+
+    function esc(value) {
+      return String(value || '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    function isListed(tpl) {
+      return !!tpl && tpl.exported !== false;
+    }
+
+    function usageCount(tpl) {
+      if (typeof tpl.useCount === 'number') return tpl.useCount;
+      return ArchiveTemplateStore.entitiesForTemplate(tpl.id).length;
+    }
+
+    function columnTone(col) {
+      const type = col?.type || '';
+      if (type === 'merged' || type === 'aggregate') return '#08979c';
+      if (type === 'tile') return '#0e7490';
+      if (type === 'track') return '#d48806';
+      if (type === 'relation') return '#722ed1';
+      if (type === 'stat') return '#389e0d';
+      if (type === 'quote') return '#8a6a12';
+      if (type === 'title') return '#667085';
+      return '#1677ff';
+    }
+
+    function templatePreview(tpl) {
+      const cols = ArchiveColumnStore.load()[tpl.id] || {};
+      const tabs = (tpl.tabs || []).filter(tab => tab.enabled !== false);
+      const source = tpl.objectSource || {};
+      const fields = (source.basicFields || tpl.basicInfo?.fields || []).slice(0, 4);
+      const icons = (tpl.header?.icons || []).slice(0, 4);
+      const horizontal = (tpl.pageLayout || (tpl.basicInfo?.position === 'top' ? 'horizontal' : 'vertical')) === 'horizontal';
+      const active = Math.max(0, tabs.findIndex(tab => (cols[tab.id] || []).some(col => col.name)));
+      const photo = tpl.header?.photo !== false;
+      if (!tabs.length) return '<p class="archive-tpl-section-desc">还没有页签。</p>';
+      return `
+        <div class="tpl-mini" data-mini>
+          <div class="tpl-mini-sheet">
+            <div class="tpl-mini-person">
+              ${photo ? '<span class="tpl-mini-photo" aria-hidden="true"></span>' : ''}
+              <div class="tpl-mini-who">
+                <strong>${esc(source.nameField || '名称')}</strong>
+                <em>${esc(source.idField || '标识')}</em>
+                ${icons.length ? `<div class="tpl-mini-icons">${icons.map(icon => `<span>${esc(icon.label || '图标')}</span>`).join('')}</div>` : ''}
+              </div>
+            </div>
+            ${fields.length ? `<div class="tpl-mini-fields">${fields.map(name => `<div><b>${esc(name)}</b><i></i></div>`).join('')}</div>` : ''}
+            <div class="tpl-mini-tabs" role="tablist">
+              ${tabs.map((tab, index) => `<button type="button" role="tab" data-mini-tab="${index}" class="${index === active ? 'is-on' : ''}" aria-selected="${index === active}">${esc(tab.name)}</button>`).join('')}
+            </div>
+            <div class="tpl-mini-stage ${horizontal ? 'is-horizontal' : 'is-vertical'}">
+              ${tabs.map((tab, index) => {
+                const list = (cols[tab.id] || []).filter(col => col.name).slice(0, 4);
+                const more = (cols[tab.id] || []).filter(col => col.name).length - list.length;
+                const body = tab.type === 'overview'
+                  ? '<p class="tpl-mini-note">总览只放主表字段</p>'
+                  : (list.length
+                    ? list.map(col => `<div class="tpl-mini-col" style="--kind:${columnTone(col)}"><b>${esc(col.name)}</b><i></i><i></i><i class="is-short"></i></div>`).join('') + (more > 0 ? `<p class="tpl-mini-note">还有 ${more} 个栏目</p>` : '')
+                    : '<p class="tpl-mini-note">这一页还没有栏目</p>');
+                return `<div class="tpl-mini-panel ${index === active ? 'is-on' : ''}" data-mini-panel="${index}">${body}</div>`;
+              }).join('')}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function layoutLabel(tpl, short) {
+      const layout = tpl.pageLayout || (tpl.basicInfo?.position === 'top' ? 'horizontal' : 'vertical');
+      if (layout === 'horizontal') return short ? '栏目左右' : '横向 · 栏目左右排列';
+      return short ? '栏目上下' : '纵向 · 栏目上下排列';
+    }
+
+    function tplById(id) {
+      return templates.find(t => t.id === id);
+    }
+
+    function persist() {
+      ArchiveTemplateStore.save(templates);
+    }
+
+    function renderPage() {
+      ArchiveTemplateStore.ENTITY_TYPES.forEach(name => {
+        if (ArchiveTemplateStore.getBinding(name)) ArchiveEntityConfigStore.ensure(name);
+      });
+      templates = ArchiveTemplateStore.getAll();
+      const view = viewKind();
+      const entity = entityParam();
+      if (entity) selectedEntity = entity;
+      const title = view === 'tpl' ? '模板库' : '档案配置';
+      document.querySelector('.kg-page-header').textContent = title;
+      document.title = title + ' - 知识图谱平台';
+      const root = document.getElementById('pageRoot');
+      if (view === 'tpl') root.innerHTML = renderTemplateLibrary();
+      else if (view === 'start' && entity) root.innerHTML = renderStartPage(entity);
+      else root.innerHTML = renderEntityOverview();
+      mountTopLibraryLink(view);
+      bindBoard();
+    }
+
+    function entityStatus(name, bindings) {
+      const cfg = ArchiveEntityConfigStore.get(name);
+      const standalone = ArchiveEntityConfigStore.isStandalone(name);
+      const copy = cfg?.tpl;
+      // 独立配置不再展示源模板，避免解除绑定后仍显示旧模板名
+      const tpl = standalone ? null : tplById(bindings[name] || cfg?.sourceTplId || '');
+      const configured = standalone || !!copy;
+      return {
+        configured,
+        standalone,
+        changed: configured && !standalone && ArchiveEntityConfigStore.isCustomized(name),
+        tpl,
+        tplId: tpl?.id || '',
+        columns: copy ? columnCountOf(copy.id) : (tpl ? columnCountOf(tpl.id) : 0)
+      };
+    }
+
+    function columnCountOf(tplId) {
+      const cols = ArchiveColumnStore.load()[tplId] || {};
+      return Object.keys(cols).reduce((sum, key) => sum + (Array.isArray(cols[key]) ? cols[key].filter(col => col.name).length : 0), 0);
+    }
+
+    function startUrl(entity) {
+      return `${siteRoot()}kg/archive-template.html?step=start&entity=${encodeURIComponent(entity)}`;
+    }
+
+    // 专用模板只排序不隐藏：出自本实体的排最前，其次通用，其余按原顺序。
+    function sortForEntity(list, entity) {
+      const rank = tpl => (tpl.sourceEntity === entity ? 0 : (tpl.isGeneric ? 1 : 2));
+      return list
+        .map((tpl, index) => ({ tpl, index }))
+        .sort((a, b) => rank(a.tpl) - rank(b.tpl) || a.index - b.index)
+        .map(item => item.tpl);
+    }
+
+    // P1 实体总览：未配置 → 起点页；已配置（含独立）→ 设计器；换模板为行上次要入口。
+    function renderEntityRow(name, bindings) {
+      const meta = entityStatus(name, bindings);
+      const designHref = entityDesignUrl(name);
+      const pickHref = startUrl(name);
+      const source = meta.tpl ? `源模板 · ${meta.tpl.name}` : '已有档案';
+      const sub = !meta.configured
+        ? '还没有档案，点进去选起点'
+        : meta.standalone
+          ? (meta.columns ? meta.columns + ' 个栏目' : '还没配栏目')
+          : `${source} · ${meta.columns ? meta.columns + ' 个栏目' : '还没配栏目'}`;
+      const statusEm = `<em class="${meta.standalone ? 'is-solo' : (meta.configured ? 'is-ready' : 'is-wait')}">${meta.standalone ? '独立配置' : (meta.configured ? '已配置' : '未配置')}</em>`;
+      const mainInner = `
+          <span class="archive-entity-main">
+            <strong>${esc(name)}${meta.changed ? '<i class="archive-entity-dot" title="副本改过，与模版可能不一致"></i>' : ''}</strong>
+            ${statusEm}
+          </span>
+          <span class="archive-entity-sub">${esc(sub)}</span>`;
+      const rowClass = `archive-entity-row is-board${meta.changed ? ' is-changed' : ''}${meta.standalone ? ' is-solo' : ''}`;
+      if (!meta.configured) {
+        return `
+        <a class="${rowClass}" href="${pickHref}" data-board-entity="${esc(name)}">
+          ${mainInner}
+        </a>`;
+      }
+      return `
+        <div class="${rowClass} has-side" data-board-entity="${esc(name)}">
+          <a class="archive-entity-row-body" href="${designHref}">
+            ${mainInner}
+          </a>
+          <a class="archive-entity-side" href="${pickHref}">换模板</a>
+        </div>`;
+    }
+
+    function renderEntityOverview() {
+      const bindings = ArchiveTemplateStore.getBindings();
+      const names = ArchiveTemplateStore.ENTITY_TYPES;
+      const done = names.filter(name => entityStatus(name, bindings).configured).length;
+      return `
+        <div class="archive-overview">
+          <div class="archive-board-head">
+            <h3>实体</h3>
+            <span class="archive-overview-count">已配置 ${done} / ${names.length}</span>
+          </div>
+          <p class="archive-tpl-section-desc">已配置（含独立配置）点行进设计器；右侧「换模板」进起点页。未配置的点行先选起点。</p>
+          <div class="archive-entity-list">
+            ${names.map(name => renderEntityRow(name, bindings)).join('')}
+          </div>
+        </div>`;
+    }
+
+    // P2 起点选择：未配置可从零；已有配置用顶部「继续编辑」；下方只列模板供套用。
+    function renderStartPage(entity) {
+      const meta = entityStatus(entity, ArchiveTemplateStore.getBindings());
+      const listed = sortForEntity(templates.filter(isListed), entity);
+      const headHint = meta.standalone
+        ? '当前是独立配置。上方可继续编辑；下面选模板会覆盖套用。'
+        : meta.configured
+          ? '已有档案。上方可继续编辑；下面选模板会覆盖套用，也可从零重配。'
+          : '选个起点：从零自己配，或直接套用下面某个模板。专用模板（出自本实体）排在最前。';
+      // 独立配置时继续编辑只放顶部，不在卡片里再放一遍
+      const scratchCard = meta.standalone
+        ? ''
+        : `
+            <article class="archive-start-card is-scratch">
+              <div>
+                <h4>从零配置</h4>
+                <p>${meta.configured
+                  ? '丢掉当前绑定，建一份空白档案，界面、栏目、对象来源全自己配。'
+                  : '不套模板，直接建一份空白档案，界面、栏目、对象来源全自己配。'}</p>
+              </div>
+              <button type="button" class="btn btn-primary" data-start-standalone="${esc(entity)}">从零配置</button>
+            </article>`;
+      return `
+        <div class="archive-start">
+          <div class="archive-start-head">
+            <div>
+              <h3>「${esc(entity)}」${meta.standalone ? '独立配置' : (meta.configured ? '已有档案' : '还没有档案')}</h3>
+              <p class="archive-tpl-section-desc">${esc(headHint)}</p>
+            </div>
+            <div class="archive-start-head-actions">
+              ${meta.configured ? `<a class="btn btn-primary" href="${entityDesignUrl(entity)}">继续编辑当前档案</a>` : ''}
+              <a class="btn" href="archive-template.html">返回实体总览</a>
+            </div>
+          </div>
+          <div class="archive-start-grid">
+            ${scratchCard}
+            ${listed.map(tpl => renderStartCard(tpl, entity)).join('')
+              || (meta.standalone
+                ? '<p class="tpl-catalog-empty">模板库还是空的，可先继续编辑当前档案。</p>'
+                : '<p class="tpl-catalog-empty">模板库还是空的，可以先从零配置。</p>')}
+          </div>
+        </div>`;
+    }
+
+    function renderStartCard(tpl, entity) {
+      const already = ArchiveTemplateStore.getBinding(entity) === tpl.id;
+      const tabs = (tpl.tabs || []).filter(tab => tab.enabled !== false);
+      const columns = columnCountOf(tpl.id);
+      const kind = [
+        tpl.sourceEntity ? `出自${tpl.sourceEntity}` : (tpl.isGeneric ? '通用' : '专用'),
+        layoutLabel(tpl, true),
+        `${tabs.length} 页签`,
+        columns ? `${columns} 栏目` : ''
+      ].filter(Boolean).join(' · ');
+      return `
+        <article class="archive-start-card" data-tpl-card="${esc(tpl.id)}">
+          <div>
+            <h4>${esc(tpl.name)}</h4>
+            <p class="tpl-card-meta">${esc(kind)}</p>
+          </div>
+          <div class="archive-start-mini">${templatePreview(tpl)}</div>
+          <button type="button" class="btn ${already ? '' : 'btn-primary'}" data-apply-one="${esc(tpl.id)}">${already ? '重新套用' : '用这个模板'}</button>
+        </article>`;
+    }
+
+    // P4 模板库：只编辑骨架与分发，套用入口回到实体侧。
+    function renderTemplateLibrary() {
+      const listed = templates.filter(isListed);
+      return `
+        <div class="archive-library">
+          <div class="tpl-catalog-head">
+            <div>
+              <h3>模板库</h3>
+              <p class="archive-tpl-section-desc">模板的骨架在这里编辑；要让实体用上某个模板，回实体总览点进去选起点。</p>
+            </div>
+            <div class="archive-library-actions">
+              <a class="btn" href="archive-template.html">返回实体总览</a>
+              <button type="button" class="btn btn-primary" id="newTplBtn">新建模板</button>
+            </div>
+          </div>
+          <div class="tpl-catalog-list">
+            ${listed.length
+              ? listed.map(tpl => renderLibraryCard(tpl)).join('')
+              : '<div class="tpl-catalog-empty">还没有导出的模板，点右上「新建模板」做一个。</div>'}
+          </div>
+        </div>`;
+    }
+
+    function renderLibraryCard(tpl) {
+      const users = ArchiveTemplateStore.entitiesForTemplate(tpl.id);
+      return `
+        <article class="tpl-card" data-tpl-card="${esc(tpl.id)}">
+          <div class="tpl-card-use">
+            <label class="tpl-card-name-label">
+              <span class="visually-hidden">模板名称</span>
+              <input class="tpl-card-name-input" data-tpl-rename="${esc(tpl.id)}" value="${esc(tpl.name)}" maxlength="40" autocomplete="off">
+            </label>
+            ${archiveDisplayInfo(tpl)}
+            <p class="tpl-card-meta">使用中：${esc(users.join('、') || '无')}</p>
+            <div class="tpl-card-actions">
+              <a class="btn btn-primary" href="${blueprintUrl(tpl.id)}">编辑骨架</a>
+              <button type="button" class="btn" data-apply-tpl="${esc(tpl.id)}">分发到实体</button>
+            </div>
+          </div>
+          <div class="tpl-mini-wrap" aria-label="${esc(tpl.name)}的档案样子">
+            ${templatePreview(tpl)}
+          </div>
+        </article>`;
+    }
+
+    function archiveDisplayInfo(tpl) {
+      const source = tpl.objectSource || {};
+      const tabs = (tpl.tabs || []).filter(tab => tab.enabled !== false);
+      const cols = ArchiveColumnStore.load()[tpl.id] || {};
+      const colCount = tabs.reduce((n, tab) => n + ((cols[tab.id] || []).filter(c => c.name).length), 0);
+      const kind = [
+        tpl.isGeneric ? '通用' : '专用',
+        layoutLabel(tpl, true),
+        tpl.sourceEntity ? `出自${tpl.sourceEntity}` : ''
+      ].filter(Boolean).join(' · ');
+      const rows = [
+        ['版式', layoutLabel(tpl, true)],
+        ['主表', source.masterTable || '未配置'],
+        ['标识', source.idField || '—'],
+        ['名称', source.nameField || '—'],
+        ['界面', `${tabs.length} 个`],
+        ['栏目', colCount ? `${colCount} 个` : '暂无']
+      ];
+      return `
+        <p class="tpl-card-meta">${esc(kind)}</p>
+        <dl class="tpl-card-facts">
+          ${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd title="${esc(v)}">${esc(v)}</dd></div>`).join('')}
+        </dl>`;
+    }
+
+    function startStandaloneAndOpen(entity) {
+      if (!entity) return;
+      ArchiveEntityConfigStore.startStandalone(entity);
+      selectedEntity = entity;
+      showToast('已为「' + entity + '」建空白档案，未套用模板');
+      location.href = entityDesignUrl(entity);
+    }
+
+    // 顶栏右上角常驻「模板库(N)」入口；当前就在模板库时标为当前页。
+    function mountTopLibraryLink(view) {
+      const right = document.querySelector('.kg-top-header .kg-header-right');
+      if (!right) return;
+      let link = right.querySelector('.kg-top-tpl-link');
+      if (!link) {
+        link = document.createElement('a');
+        link.className = 'kg-top-tpl-link';
+        right.prepend(link);
+      }
+      const count = templates.filter(isListed).length;
+      link.href = 'archive-template.html?view=tpl';
+      link.textContent = '模板库(' + count + ')';
+      link.classList.toggle('is-on', view === 'tpl');
+    }
+
+    function bindBoard() {
+      document.querySelectorAll('[data-start-standalone]').forEach(btn => {
+        btn.addEventListener('click', (event) => {
+          event.preventDefault();
+          startStandaloneAndOpen(btn.dataset.startStandalone);
+        });
+      });
+      document.getElementById('newTplBtn')?.addEventListener('click', () => {
+        const tpl = ArchiveTemplateStore.blankTemplate('');
+        tpl.objectSource.entityType = '';
+        tpl.exported = true;
+        tpl.useCount = 0;
+        templates.push(tpl);
+        persist();
+        ArchiveColumnStore.saveForTemplate(tpl.id, { overview: [] });
+        location.href = blueprintUrl(tpl.id);
+      });
+      document.querySelectorAll('[data-tpl-rename]').forEach(input => {
+        const commit = () => {
+          const tpl = tplById(input.dataset.tplRename);
+          if (!tpl) return;
+          const next = (input.value || '').trim() || tpl.name || '未命名模板';
+          input.value = next;
+          if (next === tpl.name) return;
+          tpl.name = next;
+          persist();
+          showToast('模板已改名为「' + next + '」');
+          renderPage();
+        };
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            input.blur();
+          }
+        });
+        input.addEventListener('blur', commit);
+      });
+      document.querySelectorAll('[data-apply-tpl]').forEach(btn => {
+        btn.addEventListener('click', () => openApplyPanel(btn.dataset.applyTpl));
+      });
+      document.querySelectorAll('[data-apply-one]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tpl = tplById(btn.dataset.applyOne);
+          if (!tpl || !selectedEntity) return;
+          const bound = ArchiveTemplateStore.getBinding(selectedEntity) === tpl.id;
+          const hasCopy = !!ArchiveEntityConfigStore.get(selectedEntity)?.tpl;
+          if (bound && hasCopy) {
+            const ok = window.confirm(`「${selectedEntity}」已在用这份模板。重新应用会用模版覆盖当前档案副本，确定吗？`);
+            if (!ok) return;
+          }
+          applyEntities(tpl, [selectedEntity], { force: true });
+          showToast(`已套用「${tpl.name}」的界面与栏目样式到「${selectedEntity}」，请再配对象来源与表接入`);
+          location.href = entityDesignUrl(selectedEntity);
+        });
+      });
+      document.querySelectorAll('[data-mini]').forEach(mini => {
+        mini.addEventListener('click', (event) => {
+          const tab = event.target.closest('[data-mini-tab]');
+          if (!tab || !mini.contains(tab)) return;
+          const key = tab.dataset.miniTab;
+          mini.querySelectorAll('[data-mini-tab]').forEach(btn => {
+            const on = btn.dataset.miniTab === key;
+            btn.classList.toggle('is-on', on);
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          mini.querySelectorAll('[data-mini-panel]').forEach(panel => {
+            panel.classList.toggle('is-on', panel.dataset.miniPanel === key);
+          });
+        });
+      });
+
+      function applyEntities(tpl, names, opts = {}) {
+        const added = [];
+        names.forEach(entity => {
+          const oldId = ArchiveTemplateStore.getBinding(entity);
+          const old = tplById(oldId);
+          const hadCopy = !!ArchiveEntityConfigStore.get(entity)?.tpl;
+          if (!opts.force && oldId === tpl.id && hadCopy) return;
+          ArchiveTemplateStore.applyBlueprintToEntity(entity, tpl.id);
+          if (old && old.exported === false && old.id !== tpl.id && !ArchiveTemplateStore.entitiesForTemplate(old.id).length) {
+            templates = templates.filter(item => item.id !== old.id);
+            const cols = ArchiveColumnStore.load();
+            delete cols[old.id];
+            ArchiveColumnStore.save(cols);
+          }
+          added.push(entity);
+        });
+        templates = ArchiveTemplateStore.getAll();
+        return added;
+      }
+
+      function openApplyPanel(tplId) {
+        const tpl = tplById(tplId);
+        if (!tpl) return;
+        const users = ArchiveTemplateStore.entitiesForTemplate(tpl.id);
+        const unused = ArchiveTemplateStore.ENTITY_TYPES.filter(name => !users.includes(name));
+        if (!unused.length) {
+          showToast('全部实体都已应用这份模版');
+          return;
+        }
+        const mask = document.createElement('div');
+        mask.className = 'tpl-name-mask';
+        mask.innerHTML = `
+          <div class="tpl-name-panel" role="dialog" aria-modal="true" aria-labelledby="applyTplTitle">
+            <h3 id="applyTplTitle">分发到实体</h3>
+            <p>会把「${esc(tpl.name)}」的界面与栏目样式复制给实体；表接入与对象来源需实体侧再配。之后改模版不会自动改这些实体。</p>
+            <div class="archive-entity-batch">${unused.map(name => `
+              <label class="archive-entity-check"><input type="checkbox" data-apply-pick="${esc(name)}" checked> ${esc(name)}</label>
+            `).join('')}</div>
+            <div class="tpl-name-actions">
+              <button type="button" class="btn" id="applyTplCancel">取消</button>
+              <button type="button" class="btn btn-primary" id="applyTplOk">分发并打开第一个</button>
+            </div>
+          </div>`;
+        document.body.appendChild(mask);
+        const close = () => mask.remove();
+        mask.querySelector('#applyTplCancel').addEventListener('click', close);
+        mask.querySelector('#applyTplOk').addEventListener('click', () => {
+          const names = [...mask.querySelectorAll('[data-apply-pick]:checked')].map(el => el.dataset.applyPick);
+          if (!names.length) { showToast('请先勾选实体'); return; }
+          const added = applyEntities(tpl, names);
+          close();
+          showToast('已为「' + added.join('、') + '」套用界面与样式，请再配数据接入');
+          location.href = entityDesignUrl(added[0]);
+        });
+        mask.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') { event.preventDefault(); close(); }
+        });
+      }
+    }
+
+    if (opening.get('view') === 'entity') {
+      const entity = opening.get('entity');
+      if (entity) {
+        location.replace(entityDesignUrl(entity));
+      } else if (opening.get('tpl')) {
+        location.replace(blueprintUrl(opening.get('tpl')));
+      } else {
+        location.replace(siteRoot() + 'kg/archive-template.html');
+      }
+      throw new Error('redirect');
+    }
+    initKgLayout('archive-tpl', '档案模板');
+    renderPage();
+  </script>
+</body>
+</html>
